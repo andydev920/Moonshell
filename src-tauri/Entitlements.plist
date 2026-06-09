@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Moonshell — macOS hardened-runtime entitlements.
+
+  Distribution model: Developer ID + notarization, NOT sandboxed (an SSH client
+  must read ~/.ssh, arbitrary private-key files, and the Keychain — sandbox would
+  break all three). Hardened runtime is applied by Tauri at signing time.
+
+  Empty by design: network client, file reads, and own-Keychain access need no
+  entitlement outside the sandbox. Add an exception below only if a future dependency
+  requires it (e.g. com.apple.security.cs.disable-library-validation for a 3rd-party dylib).
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

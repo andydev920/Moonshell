@@ -1,0 +1,41 @@
+[package]
+name = "moonshell"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "moonshell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+# 本地文件选择/保存对话框(上传/下载取本地路径)。Tauri 官方轻量插件。
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# fs + io-util 供 SFTP 上传/下载用 tokio::fs::File 与 tokio::io::copy 流式读写本地文件。
+tokio = { version = "1", features = ["sync", "macros", "fs", "io-util"] }
+russh = "0.61.2"
+# SFTP 子系统:russh 官方配套,声明依赖 russh ^0.61.0,与本项目 0.61.2 兼容。
+# default features 已含 client;主要传递依赖 tokio/bytes/futures/log,轻量。
+russh-sftp = "2.3"
+# 密码存 macOS Keychain。default-features=false + apple-native:只编 Security
+# framework 后端,不拖 Linux secret-service/dbus 等重传递依赖,保持轻量。
+# 锁 v3:Entry::new 直连 Keychain(v4/keyring-core 需先 init,语义不同)。
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+# 持久化:主机列表等结构化数据存本地 SQLite,文件落在 app_data_dir
+# (~/Library/Application Support/com.youfuu.moonshell/moonshell.db),清 WebView 缓存不丢。
+# bundled:把 SQLite C 库静态编进二进制(约 +1MB),无系统依赖,符合轻量原则。
+rusqlite = { version = "0.32", features = ["bundled"] }
+

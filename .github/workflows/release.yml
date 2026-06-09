@@ -1,0 +1,79 @@
+name: release
+
+# Builds, signs, notarizes, and publishes a Universal (Apple Silicon + Intel) macOS
+# build of Moonshell, then drafts a GitHub Release with the .app/.dmg attached.
+#
+# Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   APPLE_CERTIFICATE           base64 of your Developer ID Application .p12
+#                               ( base64 -i cert.p12 | pbcopy )
+#   APPLE_CERTIFICATE_PASSWORD  password set when exporting the .p12
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Your Name (TEAMID)"
+#   KEYCHAIN_PASSWORD           any throwaway string (unlocks the temp CI keychain)
+#   APPLE_ID                    your Apple Developer account email
+#   APPLE_PASSWORD              an app-specific password (appleid.apple.com)
+#   APPLE_TEAM_ID               10-char Team ID
+# Alternative to the last three (App Store Connect API key): set instead
+#   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_PATH  — see README "签名打包 / 发布"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Import Apple Developer certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: --target universal-apple-darwin
+          tagName: ${{ github.ref_name }}
+          releaseName: "Moonshell ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
