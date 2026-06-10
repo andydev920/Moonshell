@@ -116,13 +116,15 @@
     })(),
   );
 
-  // Monitor panel, parallel to SFTP. sessionId (= tab.id) of the open monitor; null if none.
-  let monitorOpenId = $state<string | null>(null);
+  // Monitor panel. Unlike SFTP (bound to one session's file browser), the monitor *follows the
+  // active tab*: a single boolean toggle, and it always samples whichever ssh session is in front.
+  let monitorOpen = $state(false);
+  // Active tab as a connected ssh session, or null (settings/form/closed tabs have no monitor).
+  const monitorTab = $derived(
+    active?.kind === "ssh" && active.status === "open" ? active : null,
+  );
   const monitorTitle = $derived(
-    (() => {
-      const t = tabs.find((x) => x.id === monitorOpenId);
-      return t ? `${t.user}@${t.host}` : "";
-    })(),
+    monitorTab ? `${monitorTab.user}@${monitorTab.host}` : "",
   );
 
   // Sidebar selection (highlight only) and add/edit host form
@@ -433,9 +435,9 @@
         // already gone, fine
       }
     }
-    // If this tab has SFTP / monitor open, close them too
+    // If this tab has SFTP open, close it. The monitor follows the active tab, so it needs no
+    // per-tab cleanup — it auto-hides once the front tab is no longer a connected ssh session.
     if (sftpOpenId === tab.id) sftpOpenId = null;
-    if (monitorOpenId === tab.id) monitorOpenId = null;
     const idx = tabs.findIndex((t) => t.id === tab.id);
     tabs = tabs.filter((t) => t.id !== tab.id);
     if (activeId === tab.id) {
@@ -488,9 +490,9 @@
         tab.status = "closed";
         tab.msg = tr("msg.closed");
         b.term.write(`\r\n\x1b[33m${tr("term.closed")}\x1b[0m\r\n`);
-        // On disconnect, collapse this tab's SFTP / monitor panels (backend lookups would fail).
+        // On disconnect, collapse this tab's SFTP panel (backend lookups would fail). The monitor
+        // auto-hides for non-open tabs, so it needs no explicit teardown here.
         if (sftpOpenId === tab.id) sftpOpenId = null;
-        if (monitorOpenId === tab.id) monitorOpenId = null;
       }
     });
     // If the tab was closed during the listen await: don't push (destroy already ran unlisteners, so the
@@ -894,8 +896,8 @@
           >{@render folderIcon()}<span>{tr("bar.files")}</span></button>
           <button
             class="btn ghost"
-            class:on={monitorOpenId === active.id}
-            onclick={() => (monitorOpenId = monitorOpenId === active.id ? null : active.id)}
+            class:on={monitorOpen}
+            onclick={() => (monitorOpen = !monitorOpen)}
             title={tr("bar.monitorTitle")}
           >{@render chartIcon()}<span>{tr("bar.monitor")}</span></button>
           <button class="btn danger" onclick={() => disconnectTab(active)} title={tr("bar.disconnectTitle")}
@@ -1118,7 +1120,7 @@
           />
         {/key}
       {/if}
-      {#if monitorOpenId}
+      {#if monitorOpen && monitorTab}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="resizer"
@@ -1127,12 +1129,13 @@
           aria-orientation="vertical"
           title={tr("common.resize")}
         ></div>
-        {#key monitorOpenId}
+        <!-- key on the active session id: full remount (resets metrics/procs) when the front tab changes. -->
+        {#key monitorTab.id}
           <Monitor
-            sessionId={monitorOpenId}
+            sessionId={monitorTab.id}
             title={monitorTitle}
             width={monitorW}
-            onClose={() => (monitorOpenId = null)}
+            onClose={() => (monitorOpen = false)}
           />
         {/key}
       {/if}
