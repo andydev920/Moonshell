@@ -43,7 +43,7 @@ export type Host = {
 type LegacyHost = Host & { password?: string };
 
 /** Legacy localStorage key, removed after migration. */
-const LEGACY_KEY = "luo.hosts";
+const LEGACY_KEY = "moonshell.hosts";
 
 /** Fills in safe defaults for savePassword / auth on a single host. */
 function normalize(h: Host): Host {

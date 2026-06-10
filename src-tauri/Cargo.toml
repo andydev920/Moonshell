@@ -35,7 +35,7 @@ russh-sftp = "2.3"
 # 锁 v3:Entry::new 直连 Keychain(v4/keyring-core 需先 init,语义不同)。
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 # 持久化:主机列表等结构化数据存本地 SQLite,文件落在 app_data_dir
-# (~/Library/Application Support/com.youfuu.moonshell/moonshell.db),清 WebView 缓存不丢。
+# (~/Library/Application Support/jp.moonya.moonshell/moonshell.db),清 WebView 缓存不丢。
 # bundled:把 SQLite C 库静态编进二进制(约 +1MB),无系统依赖,符合轻量原则。
 rusqlite = { version = "0.32", features = ["bundled"] }
 

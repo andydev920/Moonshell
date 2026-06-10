@@ -14,7 +14,7 @@
 
 // Local persistence: host list in SQLite.
 //
-// - DB file lives in app_data_dir (~/Library/Application Support/com.youfuu.moonshell/moonshell.db); survives WebView/cache resets.
+// - DB file lives in app_data_dir (~/Library/Application Support/jp.moonya.moonshell/moonshell.db); survives WebView/cache resets.
 // - Connection opened once in lib.rs .setup(), managed as Db(Mutex<Connection>); commands lock briefly.
 // - Passwords stay in macOS Keychain (ssh.rs secret_*); DB only keeps the savePassword flag.
 // - Ordering: list returns by ascending rowid (insertion order); save uses UPSERT (not INSERT OR REPLACE, which rebuilds the row and changes rowid).
