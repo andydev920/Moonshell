@@ -149,7 +149,7 @@
     const v = Number(localStorage.getItem(key));
     return Number.isFinite(v) && v > 0 ? v : def;
   }
-  let sidebarW = $state(loadW("moonshell.sidebarW", 210));
+  let sidebarW = $state(loadW("moonshell.sidebarW", 245));
   let sftpW = $state(loadW("moonshell.sftpW", 380));
   let monitorW = $state(loadW("moonshell.monitorW", 380));
 
@@ -1270,7 +1270,7 @@
 
   /* Sidebar */
   .sidebar {
-    width: 210px;
+    width: 245px;
     flex-shrink: 0;
     background: var(--surface-1);
     border-right: 1px solid var(--line);
