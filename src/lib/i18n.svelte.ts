@@ -150,6 +150,14 @@ const zh: Dict = {
   "sftp.downloading": "下载中: {name}…",
   "sftp.pickFileFail": "选择文件失败: {e}",
   "sftp.pickSaveFail": "选择保存路径失败: {e}",
+  "hostkey.title": "未知主机密钥",
+  "hostkey.intro": "首次连接到 {target},尚无法验证它的身份。",
+  "hostkey.algo": "密钥算法",
+  "hostkey.fingerprint": "指纹 (SHA256)",
+  "hostkey.warn":
+    "请核对指纹是否与服务器公布的一致。若无法确认,可能存在中间人攻击风险。",
+  "hostkey.trust": "信任并连接",
+  "hostkey.reject": "拒绝",
 };
 
 const en: Dict = {
@@ -266,6 +274,15 @@ const en: Dict = {
   "sftp.downloading": "Downloading: {name}…",
   "sftp.pickFileFail": "Failed to pick file: {e}",
   "sftp.pickSaveFail": "Failed to pick save path: {e}",
+  "hostkey.title": "Unknown host key",
+  "hostkey.intro":
+    "Connecting to {target} for the first time; its identity can't be verified yet.",
+  "hostkey.algo": "Key algorithm",
+  "hostkey.fingerprint": "Fingerprint (SHA256)",
+  "hostkey.warn":
+    "Make sure this fingerprint matches the server's. If you can't confirm it, you may be under a man-in-the-middle attack.",
+  "hostkey.trust": "Trust & connect",
+  "hostkey.reject": "Reject",
 };
 
 const ja: Dict = {
@@ -383,6 +400,14 @@ const ja: Dict = {
   "sftp.downloading": "ダウンロード中: {name}…",
   "sftp.pickFileFail": "ファイルの選択に失敗しました: {e}",
   "sftp.pickSaveFail": "保存先の選択に失敗しました: {e}",
+  "hostkey.title": "未知のホスト鍵",
+  "hostkey.intro": "{target} へ初めて接続します。まだ正当性を確認できません。",
+  "hostkey.algo": "鍵アルゴリズム",
+  "hostkey.fingerprint": "フィンガープリント (SHA256)",
+  "hostkey.warn":
+    "このフィンガープリントがサーバー側と一致するか確認してください。確認できない場合、中間者攻撃の恐れがあります。",
+  "hostkey.trust": "信頼して接続",
+  "hostkey.reject": "拒否",
 };
 
 const fr: Dict = {
@@ -500,6 +525,15 @@ const fr: Dict = {
   "sftp.downloading": "Téléchargement : {name}…",
   "sftp.pickFileFail": "Échec de la sélection du fichier : {e}",
   "sftp.pickSaveFail": "Échec de la sélection du chemin d’enregistrement : {e}",
+  "hostkey.title": "Clé d’hôte inconnue",
+  "hostkey.intro":
+    "Première connexion à {target} ; son identité ne peut pas encore être vérifiée.",
+  "hostkey.algo": "Algorithme de clé",
+  "hostkey.fingerprint": "Empreinte (SHA256)",
+  "hostkey.warn":
+    "Vérifiez que cette empreinte correspond à celle du serveur. Sans confirmation, vous pourriez subir une attaque de l’intercepteur.",
+  "hostkey.trust": "Faire confiance et se connecter",
+  "hostkey.reject": "Refuser",
 };
 
 const de: Dict = {
@@ -618,6 +652,15 @@ const de: Dict = {
   "sftp.downloading": "Wird heruntergeladen: {name}…",
   "sftp.pickFileFail": "Datei konnte nicht ausgewählt werden: {e}",
   "sftp.pickSaveFail": "Speicherort konnte nicht ausgewählt werden: {e}",
+  "hostkey.title": "Unbekannter Hostschlüssel",
+  "hostkey.intro":
+    "Erste Verbindung zu {target}; die Identität kann noch nicht überprüft werden.",
+  "hostkey.algo": "Schlüsselalgorithmus",
+  "hostkey.fingerprint": "Fingerabdruck (SHA256)",
+  "hostkey.warn":
+    "Stellen Sie sicher, dass dieser Fingerabdruck mit dem des Servers übereinstimmt. Andernfalls droht ein Man-in-the-Middle-Angriff.",
+  "hostkey.trust": "Vertrauen und verbinden",
+  "hostkey.reject": "Ablehnen",
 };
 
 const es: Dict = {
@@ -735,6 +778,15 @@ const es: Dict = {
   "sftp.downloading": "Descargando: {name}…",
   "sftp.pickFileFail": "No se pudo seleccionar el archivo: {e}",
   "sftp.pickSaveFail": "No se pudo seleccionar la ruta de guardado: {e}",
+  "hostkey.title": "Clave de host desconocida",
+  "hostkey.intro":
+    "Conectando a {target} por primera vez; aún no se puede verificar su identidad.",
+  "hostkey.algo": "Algoritmo de clave",
+  "hostkey.fingerprint": "Huella (SHA256)",
+  "hostkey.warn":
+    "Asegúrate de que esta huella coincide con la del servidor. Si no puedes confirmarlo, podrías sufrir un ataque de intermediario.",
+  "hostkey.trust": "Confiar y conectar",
+  "hostkey.reject": "Rechazar",
 };
 
 const messages: Record<Locale, Dict> = { zh, en, ja, fr, de, es };

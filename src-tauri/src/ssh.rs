@@ -28,6 +28,7 @@
 // on exit, and only disconnects + drops the last Arc<Handle> when members hits zero.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use russh::client;
@@ -35,27 +36,52 @@ use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 /// Fixed Keychain service name; account is the host id.
 const KEYCHAIN_SERVICE: &str = "moonshell-ssh";
 
+/// Pending interactive host-key trust prompts: request id -> decision sender.
+/// check_server_key inserts a oneshot sender keyed by a fresh request id, emits an
+/// `ssh-hostkey-prompt` event, then awaits the receiver; ssh_hostkey_decision (driven by the
+/// front-end modal) looks the sender up by id and sends the user's trust/reject choice.
+type HostKeyPrompts = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<bool>>>>;
+
+/// Monotonic source of host-key prompt request ids (never reused within a run).
+static HOST_KEY_REQ: AtomicU64 = AtomicU64::new(1);
+
+/// Payload of the `ssh-hostkey-prompt` event: enough for the front-end to show the fingerprint.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct HostKeyPrompt {
+    request_id: u64,
+    host: String,
+    port: u16,
+    algorithm: String,
+    fingerprint: String,
+}
+
 /// russh client callbacks.
 ///
-/// known_hosts uses ssh `accept-new` semantics (see check_server_key):
-///   - unknown host: write the public key to ~/.ssh/known_hosts and allow;
-///   - known but key changed: hard reject, handshake fails.
+/// known_hosts handling (see check_server_key):
+///   - known and matching: allow;
+///   - unknown host: emit an interactive trust prompt to the front-end and block the handshake
+///     until the user decides — trust -> write to ~/.ssh/known_hosts and allow; reject -> fail;
+///   - known but key changed: hard reject, handshake fails (possible MITM).
 ///
 /// The callback (&mut self) can't see ConnectArgs, so Client carries the target host/port
-/// before connect, plus a shared reject_reason that ssh_connect reads for the precise reason
-/// after a failed handshake (KeyChanged handshake errors carry no semantic text).
-///
-/// TODO: could emit an event + interactive front-end trust/reject prompt instead of accept-new + hard reject.
+/// before connect, the AppHandle + prompts map to drive the interactive prompt, plus a shared
+/// reject_reason that ssh_connect reads for the precise reason after a failed handshake
+/// (KeyChanged / user-rejected handshake errors carry no semantic text).
 struct Client {
     host: String,
     port: u16,
-    /// Set by the callback on key change / write failure to carry the precise reason.
+    /// Set by the callback on key change / rejection / write failure to carry the precise reason.
     reject_reason: Arc<std::sync::Mutex<Option<String>>>,
+    /// Used to emit the host-key trust prompt to the front-end.
+    app: AppHandle,
+    /// Shared map the front-end's decision (ssh_hostkey_decision) is routed back through.
+    prompts: HostKeyPrompts,
 }
 
 impl client::Handler for Client {
@@ -70,8 +96,44 @@ impl client::Handler for Client {
         match check_known_hosts(&self.host, self.port, server_public_key) {
             // Known and matching -> allow
             Ok(true) => Ok(true),
-            // No entry for this host (unknown) -> accept-new: write and allow
+            // No entry for this host (unknown) -> ask the user (interactive prompt), don't silently trust.
             Ok(false) => {
+                let request_id = HOST_KEY_REQ.fetch_add(1, Ordering::Relaxed);
+                let fingerprint = server_public_key
+                    .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+                    .to_string();
+                let algorithm = server_public_key.algorithm().to_string();
+
+                let (tx, rx) = oneshot::channel::<bool>();
+                if let Ok(mut map) = self.prompts.lock() {
+                    map.insert(request_id, tx);
+                }
+                let _ = self.app.emit(
+                    "ssh-hostkey-prompt",
+                    HostKeyPrompt {
+                        request_id,
+                        host: self.host.clone(),
+                        port: self.port,
+                        algorithm,
+                        fingerprint,
+                    },
+                );
+
+                // Block the handshake until the user decides. A dropped sender (webview closed /
+                // app quit) resolves to Err -> treat as reject, never silently trust.
+                let trusted = rx.await.unwrap_or(false);
+                // Drop any leftover sender for this id (reject path may not have consumed it).
+                if let Ok(mut map) = self.prompts.lock() {
+                    map.remove(&request_id);
+                }
+
+                if !trusted {
+                    if let Ok(mut slot) = self.reject_reason.lock() {
+                        *slot = Some("已拒绝信任该主机的密钥,连接已取消。".into());
+                    }
+                    return Ok(false);
+                }
+
                 if let Err(e) = learn_known_hosts(&self.host, self.port, server_public_key) {
                     if let Ok(mut slot) = self.reject_reason.lock() {
                         *slot = Some(format!("写入 known_hosts 失败: {e}"));
@@ -175,6 +237,8 @@ pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SessionCmd>>>>,
     connections: Arc<Mutex<HashMap<ConnKey, ConnState>>>,
     session_conn: Arc<Mutex<HashMap<String, ConnKey>>>,
+    /// In-flight interactive host-key trust prompts (request id -> decision sender). See HostKeyPrompts.
+    host_key_prompts: HostKeyPrompts,
 }
 
 /// Derive the reuse key from connect args. Same (user, host, port) = same connection.
@@ -250,9 +314,14 @@ fn resolve_password(args: &ConnectArgs, typed: Option<String>) -> Result<String,
     Ok(String::new())
 }
 
-/// Full first-connect: client::connect (incl. known_hosts accept-new) + auth per AuthMethod.
+/// Full first-connect: client::connect (incl. known_hosts check + interactive trust prompt for
+/// unknown hosts, see Client::check_server_key) + auth per AuthMethod.
 /// Returns the authenticated owned handle. All network await runs here, outside the connections lock.
-async fn establish_connection(args: &ConnectArgs) -> Result<client::Handle<Client>, String> {
+async fn establish_connection(
+    args: &ConnectArgs,
+    app: &AppHandle,
+    prompts: &HostKeyPrompts,
+) -> Result<client::Handle<Client>, String> {
     // Dead-connection detection: keepalive every 20s, declare dead and disconnect after 3 misses
     // (~60s). Otherwise on a pulled cable / killed sshd, channel.wait() and SFTP's tokio::io::copy
     // hang forever, pinning the Arc<Handle> so the connection is never reclaimed.
@@ -268,6 +337,8 @@ async fn establish_connection(args: &ConnectArgs) -> Result<client::Handle<Clien
         host: args.host.clone(),
         port: args.port,
         reject_reason: reject_reason.clone(),
+        app: app.clone(),
+        prompts: prompts.clone(),
     };
 
     let mut handle = client::connect(config, (args.host.as_str(), args.port), handler)
@@ -330,6 +401,7 @@ async fn establish_connection(args: &ConnectArgs) -> Result<client::Handle<Clien
 async fn acquire_connection(
     state: &AppState,
     args: &ConnectArgs,
+    app: &AppHandle,
 ) -> Result<Arc<client::Handle<Client>>, String> {
     let key = conn_key(args);
 
@@ -374,7 +446,7 @@ async fn acquire_connection(
 
         // Here the placeholder is this task's Connecting, so we run the first-connect.
         // First-connect (connect + auth) runs without holding the lock.
-        match establish_connection(args).await {
+        match establish_connection(args, app, &state.host_key_prompts).await {
             Ok(handle) => {
                 let handle = Arc::new(handle);
                 // Success: store as Ready with self in members, wake all waiters.
@@ -438,7 +510,9 @@ pub async fn ssh_connect(
     let key = conn_key(&args);
 
     // Acquire the connection (reuse or deduped first-connect); members now includes this session id.
-    let handle = acquire_connection(&state, &args).await?;
+    // app is passed by ref (it's moved into the session task below) so the known_hosts callback can
+    // raise the interactive trust prompt.
+    let handle = acquire_connection(&state, &args, &app).await?;
 
     // Open this tab's own channel on the shared handle (&self, no serialization needed).
     let mut channel = match handle.channel_open_session().await {
@@ -546,6 +620,28 @@ pub async fn ssh_connect(
         let _ = app.emit("ssh-closed", ClosedPayload { id });
     });
 
+    Ok(())
+}
+
+/// Resolve an interactive host-key trust prompt: the front-end modal calls this with the
+/// request id from the `ssh-hostkey-prompt` event and the user's choice. Routes the decision
+/// to the blocked check_server_key callback via its oneshot sender. A missing id (stale prompt,
+/// already resolved) is a no-op.
+#[tauri::command]
+pub async fn ssh_hostkey_decision(
+    state: State<'_, AppState>,
+    request_id: u64,
+    trust: bool,
+) -> Result<(), String> {
+    let sender = state
+        .host_key_prompts
+        .lock()
+        .map_err(|_| "内部状态错误".to_string())?
+        .remove(&request_id);
+    if let Some(tx) = sender {
+        // Receiver dropped (handshake already aborted) -> ignore.
+        let _ = tx.send(trust);
+    }
     Ok(())
 }
 

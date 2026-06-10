@@ -47,7 +47,42 @@ xterm.js (web terminal)  ⇄  Tauri IPC  ⇄  Rust session manager  ⇄  russh (
 
 ## Security state (read before touching auth)
 
-The remaining deliberate gap — don't assume it's done:
-- `Client::check_server_key` in `ssh.rs` **unconditionally trusts** the server key. known_hosts fingerprint verification is still a planned TODO (step 3). Host management + persistence already landed (SQLite + Keychain, see the Persistence note above), so when you wire up known_hosts, the natural home for fingerprints is a `known_hosts` table in `store.rs`.
+**Host-key verification (`Client::check_server_key` in `ssh.rs`) is done** and uses `~/.ssh/known_hosts` (russh `check_known_hosts` / `learn_known_hosts`, interoperable with system ssh — deliberately *not* a SQLite table):
+- known + matching → allow;
+- **unknown host → interactive trust prompt**: the callback mints a request id, emits `ssh-hostkey-prompt` (host/port/algo/SHA256 fingerprint), and **blocks the handshake** awaiting a oneshot. The front-end modal (`+page.svelte`, `hostKeyQueue`) calls `ssh_hostkey_decision(requestId, trust)`, which routes the choice back via `AppState.host_key_prompts`. Trust → `learn_known_hosts` + allow; reject (or dropped sender, e.g. webview reload) → fail closed. **Never silently accept-new.**
+- known but **key changed → hard reject** (possible MITM); the user must hand-edit `known_hosts`. This branch is intentionally *not* behind a prompt — keep it that way unless asked.
 
 Already done: both **password** and **private-key** auth work (`ssh.rs` does `authenticate_password` and `load_secret_key` + `auth_publickey`). Passwords persist in the macOS Keychain (`secret_*`); the DB only keeps a `savePassword` flag. Private-key **passphrases are intentionally not persisted** — prompted per connect.
+
+## 签名打包 / 发布
+
+发布形态:**Developer ID + 公证、非沙盒**的 Universal 包(Apple Silicon + Intel)。不上 App Store —— 沙盒会挡住读 `~/.ssh`、私钥文件与 Keychain。
+
+**前置(一次性)**
+1. Apple Developer Program 会员(登录 App Store Connect 的付费账号)。
+2. **Developer ID Application** 证书:Xcode → Settings → Accounts → Manage Certificates → `+`,或 developer.apple.com 生成,装进 login keychain。核对:`security find-identity -v -p codesigning`。
+3. 公证凭证二选一:**App 专用密码**(appleid.apple.com)+ Team ID;或 **App Store Connect API Key**(`.p8` + Issuer ID + Key ID)。
+
+**本机打包**
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin   # 一次
+cp scripts/signing.env.example scripts/signing.env           # 填好(已 gitignore)
+./scripts/build-macos.sh
+```
+产物在 `src-tauri/target/universal-apple-darwin/release/bundle/{dmg,macos}/`。env 齐全时 Tauri 自动签名(hardened runtime)+ 公证 + staple。
+
+**CI 发布**(`.github/workflows/release.yml`)—— 在仓库 Secrets 配 `APPLE_CERTIFICATE`(`.p12` 的 base64)、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`、`KEYCHAIN_PASSWORD`、`APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`,然后:
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+workflow 会出 Universal 包并起草带 `.dmg`/`.app` 的 Release。改用 API Key 时把后三个换成 `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH`。
+
+**验证**
+```bash
+spctl -a -vv Moonshell.app        # 期望:accepted, source=Notarized Developer ID
+xcrun stapler validate Moonshell.app
+```
+
+## 已知 TODO / 待加固
+
+- **正式签名发布** — 配置与 CI 已就绪,待填入 Apple 证书 + 公证凭证跑通一次

@@ -82,6 +82,30 @@
     );
   });
 
+  // Interactive host-key trust prompts (emitted by the backend on first connect to an unknown host).
+  // Queued so concurrent connects each get answered; the modal shows queue[0], the answer dequeues it.
+  type HostKeyPrompt = {
+    requestId: number;
+    host: string;
+    port: number;
+    algorithm: string;
+    fingerprint: string;
+  };
+  let hostKeyQueue = $state<HostKeyPrompt[]>([]);
+  const hostKeyPrompt = $derived(hostKeyQueue[0] ?? null);
+
+  // Answer the front-most host-key prompt: tell the backend, then dequeue.
+  async function decideHostKey(trust: boolean) {
+    const p = hostKeyQueue[0];
+    if (!p) return;
+    hostKeyQueue = hostKeyQueue.slice(1);
+    try {
+      await invoke("ssh_hostkey_decision", { requestId: p.requestId, trust });
+    } catch {
+      // Backend prompt already gone (handshake aborted) — nothing to do.
+    }
+  }
+
   // sessionId (= tab.id) of the open SFTP panel; null if none.
   let sftpOpenId = $state<string | null>(null);
   // Panel title shows the tab's user@host
@@ -301,10 +325,20 @@
     };
     window.addEventListener("keydown", onKey);
 
+    // Global host-key trust prompt: backend blocks the handshake and emits this on first connect
+    // to an unknown host. Enqueue; the modal renders queue[0]. One listener for all sessions.
+    let unlistenHostKey: UnlistenFn | undefined;
+    listen<HostKeyPrompt>("ssh-hostkey-prompt", (e) => {
+      hostKeyQueue = [...hostKeyQueue, e.payload];
+    }).then((u) => {
+      unlistenHostKey = u;
+    });
+
     return () => {
       clearTimeout(resizeTimer);
       ro.disconnect();
       window.removeEventListener("keydown", onKey);
+      unlistenHostKey?.();
     };
   });
 
@@ -1105,6 +1139,36 @@
     </div>
   </main>
   </div>
+
+  {#if hostKeyPrompt}
+    <div class="hk-backdrop" role="dialog" aria-modal="true">
+      <div class="hk-card">
+        <div class="hk-title">{tr("hostkey.title")}</div>
+        <div class="hk-intro">
+          {tr("hostkey.intro", {
+            target: `${hostKeyPrompt.host}:${hostKeyPrompt.port}`,
+          })}
+        </div>
+        <div class="hk-row">
+          <span class="hk-label">{tr("hostkey.algo")}</span>
+          <span class="hk-val">{hostKeyPrompt.algorithm}</span>
+        </div>
+        <div class="hk-row">
+          <span class="hk-label">{tr("hostkey.fingerprint")}</span>
+          <span class="hk-val hk-fp">{hostKeyPrompt.fingerprint}</span>
+        </div>
+        <div class="hk-warn">{tr("hostkey.warn")}</div>
+        <div class="hk-actions">
+          <button class="hk-btn" onclick={() => decideHostKey(false)}>
+            {tr("hostkey.reject")}
+          </button>
+          <button class="hk-btn hk-trust" onclick={() => decideHostKey(true)}>
+            {tr("hostkey.trust")}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -1853,4 +1917,91 @@
     color: var(--text);
     font-variant-numeric: tabular-nums;
   }
+
+  /* Host-key trust prompt (unknown host on first connect) */
+  .hk-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    -webkit-app-region: no-drag;
+  }
+  .hk-card {
+    width: min(440px, calc(100vw - 48px));
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-card);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .hk-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .hk-intro {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+  .hk-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .hk-label {
+    font-size: 11px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .hk-val {
+    font-size: 13px;
+    color: var(--text);
+  }
+  .hk-fp {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    word-break: break-all;
+    user-select: text;
+  }
+  .hk-warn {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--yellow);
+    background: rgba(249, 226, 175, 0.1);
+    border-radius: var(--r-sm);
+    padding: 8px 10px;
+  }
+  .hk-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .hk-btn {
+    height: 32px;
+    padding: 0 16px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--line-strong);
+    background: var(--surface-2);
+    color: var(--text);
+    transition: filter 0.12s, border-color 0.12s;
+  }
+  .hk-btn:hover { border-color: var(--red); color: var(--red); }
+  .hk-trust {
+    background: var(--blue);
+    border-color: transparent;
+    color: var(--bg);
+  }
+  .hk-trust:hover { filter: brightness(1.08); color: var(--bg); }
 </style>

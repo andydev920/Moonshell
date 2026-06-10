@@ -45,6 +45,7 @@ pub fn run() {
             ssh::ssh_write,
             ssh::ssh_resize,
             ssh::ssh_disconnect,
+            ssh::ssh_hostkey_decision,
             ssh::secret_set,
             ssh::secret_get,
             ssh::secret_delete,
