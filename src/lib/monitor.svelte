@@ -166,7 +166,7 @@
 
 <aside class="drawer" style="width: {width}px">
   <header class="dhead">
-    <span class="dtitle" title={title}><span class="dtag">{tr("monitor.title")}</span> · {title}</span>
+    <span class="dtitle"><span class="dtag">{tr("monitor.title")}</span></span>
     <button class="close" title={tr("common.close")} onclick={onClose}>×</button>
   </header>
 

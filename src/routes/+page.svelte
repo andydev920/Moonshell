@@ -154,6 +154,14 @@
   let sidebarW = $state(loadW("moonshell.sidebarW", 245));
   let sftpW = $state(loadW("moonshell.sftpW", 380));
   let monitorW = $state(loadW("moonshell.monitorW", 380));
+  let sidebarCollapsed = $state(localStorage.getItem("moonshell.sidebarCollapsed") === "1");
+
+  // Collapse/expand the host sidebar; persist + refit the active terminal after the layout settles.
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    localStorage.setItem("moonshell.sidebarCollapsed", sidebarCollapsed ? "1" : "0");
+    requestAnimationFrame(() => { if (activeId) fitOne(activeId); });
+  }
 
   // Drag separator: which picks the panel. sidebar widens rightward, sftp/monitor leftward.
   function startDrag(e: PointerEvent, which: "sidebar" | "sftp" | "monitor") {
@@ -746,6 +754,18 @@
   </svg>
 {/snippet}
 
+{#snippet collapseIcon(collapsed: boolean)}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+    <line x1="6" y1="2.5" x2="6" y2="13.5" />
+    {#if collapsed}
+      <path d="M9 6l2 2-2 2" />
+    {:else}
+      <path d="M11 6L9 8l2 2" />
+    {/if}
+  </svg>
+{/snippet}
+
 {#snippet searchIcon()}
   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
     <circle cx="7" cy="7" r="4.5" />
@@ -782,10 +802,12 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-tauri-drag-region></div>
   <div class="workspace">
+  {#if !sidebarCollapsed}
   <aside class="sidebar" style="width: {sidebarW}px">
     <div class="head">
       <span class="brand"><span class="mark"></span>Moonshell</span>
       <div class="head-actions">
+        <button class="add ico" onclick={toggleSidebar} title={tr("sidebar.collapse")} aria-label={tr("sidebar.collapse")}>{@render collapseIcon(false)}</button>
         <button class="add ico" onclick={openSettings} title={tr("sidebar.settings")} aria-label={tr("sidebar.settings")}>{@render gearIcon()}</button>
         <button class="add" onclick={openAdd} title={tr("sidebar.addHost")} aria-label={tr("sidebar.addHost")}>+</button>
       </div>
@@ -838,10 +860,14 @@
     aria-orientation="vertical"
     title={tr("common.resize")}
   ></div>
+  {/if}
 
   <main class="main">
     {#if tabs.length}
       <div class="tabs">
+        {#if sidebarCollapsed}
+          <button class="sidebar-peek" onclick={toggleSidebar} title={tr("sidebar.expand")} aria-label={tr("sidebar.expand")}>{@render collapseIcon(true)}</button>
+        {/if}
         {#each tabs as t (t.id)}
           <div
             class="tab"
@@ -858,6 +884,10 @@
           </div>
         {/each}
         <button class="newtab" onclick={dupActive} title={tr("tabs.newSession")}>+</button>
+      </div>
+    {:else if sidebarCollapsed}
+      <div class="tabs peek-only">
+        <button class="sidebar-peek" onclick={toggleSidebar} title={tr("sidebar.expand")} aria-label={tr("sidebar.expand")}>{@render collapseIcon(true)}</button>
       </div>
     {/if}
 
@@ -1482,6 +1512,26 @@
   }
   .resizer:hover { background: var(--blue); }
 
+  /* Button to expand the sidebar when collapsed; lives in the tab strip, centered with the tabs */
+  .sidebar-peek {
+    flex-shrink: 0;
+    align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-right: 4px;
+    background: var(--surface-2);
+    color: var(--text-mute);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .sidebar-peek:hover { border-color: var(--blue); color: var(--blue); background: var(--surface-3); }
+  .sidebar-peek:active { transform: translateY(0.5px); }
+
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
@@ -1506,6 +1556,8 @@
     scrollbar-width: none;
   }
   .tabs::-webkit-scrollbar { height: 0; }
+  /* No-tab fallback strip: only holds the expand button, so add the bottom gap tabs normally omit */
+  .tabs.peek-only { padding-bottom: 8px; }
   .tab {
     position: relative;
     display: flex;
