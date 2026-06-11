@@ -129,14 +129,14 @@ impl client::Handler for Client {
 
                 if !trusted {
                     if let Ok(mut slot) = self.reject_reason.lock() {
-                        *slot = Some("已拒绝信任该主机的密钥,连接已取消。".into());
+                        *slot = Some("Declined to trust this host's key; connection cancelled.".into());
                     }
                     return Ok(false);
                 }
 
                 if let Err(e) = learn_known_hosts(&self.host, self.port, server_public_key) {
                     if let Ok(mut slot) = self.reject_reason.lock() {
-                        *slot = Some(format!("写入 known_hosts 失败: {e}"));
+                        *slot = Some(format!("Failed to write known_hosts: {e}"));
                     }
                     return Err(russh::Error::Keys(e));
                 }
@@ -148,8 +148,10 @@ impl client::Handler for Client {
             Err(russh::keys::Error::KeyChanged { line }) => {
                 if let Ok(mut slot) = self.reject_reason.lock() {
                     *slot = Some(format!(
-                        "服务器密钥与 known_hosts 记录不匹配(第 {line} 行),疑似中间人攻击或服务器密钥已变更。\
-                         为安全起见已拒绝连接。确认无误后,请手动编辑 ~/.ssh/known_hosts 删除该主机旧行再重连。"
+                        "Server key does not match the known_hosts record (line {line}); possible \
+                         man-in-the-middle attack or the server key has changed. Connection refused \
+                         for safety. Once you are sure it is legitimate, manually edit \
+                         ~/.ssh/known_hosts to remove the old line for this host and reconnect."
                     ));
                 }
                 Ok(false)
@@ -157,7 +159,7 @@ impl client::Handler for Client {
             // Other read errors (e.g. reading known_hosts failed) -> error
             Err(e) => {
                 if let Ok(mut slot) = self.reject_reason.lock() {
-                    *slot = Some(format!("读取 known_hosts 失败: {e}"));
+                    *slot = Some(format!("Failed to read known_hosts: {e}"));
                 }
                 Err(russh::Error::Keys(e))
             }
@@ -283,7 +285,7 @@ struct ClosedPayload {
 /// Get a Keychain entry handle.
 fn keychain_entry(host_id: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, host_id)
-        .map_err(|e| format!("访问钥匙串失败: {e}"))
+        .map_err(|e| format!("Failed to access Keychain: {e}"))
 }
 
 /// Resolve the password: typed first; else if save_password, read Keychain by host id.
@@ -302,13 +304,13 @@ fn resolve_password(args: &ConnectArgs, typed: Option<String>) -> Result<String,
         let account = args
             .host_id
             .as_deref()
-            .ok_or("缺少主机 id,无法从钥匙串取密码,请手动输入")?;
+            .ok_or("Missing host id; cannot read the password from Keychain, please enter it manually")?;
         match keychain_entry(account)?.get_password() {
             Ok(p) => return Ok(p),
             Err(keyring::Error::NoEntry) => {
-                return Err("未在钥匙串中找到该主机的密码,请手动输入".into())
+                return Err("No password for this host found in Keychain, please enter it manually".into())
             }
-            Err(e) => return Err(format!("读取钥匙串密码失败: {e}")),
+            Err(e) => return Err(format!("Failed to read password from Keychain: {e}")),
         }
     }
     Ok(String::new())
@@ -348,7 +350,7 @@ async fn establish_connection(
             if let Some(reason) = reject_reason.lock().ok().and_then(|r| r.clone()) {
                 reason
             } else {
-                format!("连接失败: {e}")
+                format!("Connection failed: {e}")
             }
         })?;
 
@@ -359,14 +361,14 @@ async fn establish_connection(
             ref passphrase,
         }) => {
             let key = russh::keys::load_secret_key(path, passphrase.as_deref())
-                .map_err(|e| format!("读取私钥失败: {e}(检查路径或 passphrase 是否正确)"))?;
+                .map_err(|e| format!("Failed to read private key: {e} (check the path and passphrase)"))?;
             let kha = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
             let auth = handle
                 .authenticate_publickey(&args.user, kha)
                 .await
-                .map_err(|e| format!("密钥认证出错: {e}"))?;
+                .map_err(|e| format!("Key authentication error: {e}"))?;
             if !auth.success() {
-                return Err("密钥认证失败:私钥不被服务器接受或用户名错误".into());
+                return Err("Key authentication failed: the private key was rejected by the server or the username is wrong".into());
             }
         }
         Some(AuthMethod::Password { ref password }) => {
@@ -374,9 +376,9 @@ async fn establish_connection(
             let auth = handle
                 .authenticate_password(&args.user, &pw)
                 .await
-                .map_err(|e| format!("认证出错: {e}"))?;
+                .map_err(|e| format!("Authentication error: {e}"))?;
             if !auth.success() {
-                return Err("认证失败:用户名或密码错误".into());
+                return Err("Authentication failed: wrong username or password".into());
             }
         }
         // Legacy front-end compat: no auth field -> password auth (source: args.password -> Keychain).
@@ -385,9 +387,9 @@ async fn establish_connection(
             let auth = handle
                 .authenticate_password(&args.user, &pw)
                 .await
-                .map_err(|e| format!("认证出错: {e}"))?;
+                .map_err(|e| format!("Authentication error: {e}"))?;
             if !auth.success() {
-                return Err("认证失败:用户名或密码错误".into());
+                return Err("Authentication failed: wrong username or password".into());
             }
         }
     }
@@ -524,7 +526,7 @@ pub async fn ssh_connect(
                     .disconnect(russh::Disconnect::ByApplication, "", "")
                     .await;
             }
-            return Err(format!("打开会话失败: {e}"));
+            return Err(format!("Failed to open session: {e}"));
         }
     };
 
@@ -536,7 +538,7 @@ pub async fn ssh_connect(
         if let Some(h) = release_member(&state, &key, &args.id).await {
             let _ = h.disconnect(russh::Disconnect::ByApplication, "", "").await;
         }
-        return Err(format!("申请 PTY 失败: {e}"));
+        return Err(format!("Failed to request PTY: {e}"));
     }
 
     if let Err(e) = channel.request_shell(true).await {
@@ -544,7 +546,7 @@ pub async fn ssh_connect(
         if let Some(h) = release_member(&state, &key, &args.id).await {
             let _ = h.disconnect(russh::Disconnect::ByApplication, "", "").await;
         }
-        return Err(format!("启动 shell 失败: {e}"));
+        return Err(format!("Failed to start shell: {e}"));
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SessionCmd>();
@@ -636,7 +638,7 @@ pub async fn ssh_hostkey_decision(
     let sender = state
         .host_key_prompts
         .lock()
-        .map_err(|_| "内部状态错误".to_string())?
+        .map_err(|_| "Internal state error".to_string())?
         .remove(&request_id);
     if let Some(tx) = sender {
         // Receiver dropped (handshake already aborted) -> ignore.
@@ -654,7 +656,7 @@ pub async fn ssh_write(
     let sessions = state.sessions.lock().await;
     if let Some(tx) = sessions.get(&id) {
         tx.send(SessionCmd::Data(data))
-            .map_err(|_| "会话已关闭".to_string())?;
+            .map_err(|_| "Session is closed".to_string())?;
     }
     Ok(())
 }
@@ -690,7 +692,7 @@ pub async fn ssh_disconnect(state: State<'_, AppState>, id: String) -> Result<()
 pub async fn secret_set(host_id: String, password: String) -> Result<(), String> {
     keychain_entry(&host_id)?
         .set_password(&password)
-        .map_err(|e| format!("保存密码到钥匙串失败: {e}"))
+        .map_err(|e| format!("Failed to save password to Keychain: {e}"))
 }
 
 /// Read a host's password; returns None if no entry (not an error).
@@ -699,7 +701,7 @@ pub async fn secret_get(host_id: String) -> Result<Option<String>, String> {
     match keychain_entry(&host_id)?.get_password() {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("读取钥匙串密码失败: {e}")),
+        Err(e) => Err(format!("Failed to read password from Keychain: {e}")),
     }
 }
 
@@ -709,7 +711,7 @@ pub async fn secret_delete(host_id: String) -> Result<(), String> {
     match keychain_entry(&host_id)?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("删除钥匙串密码失败: {e}")),
+        Err(e) => Err(format!("Failed to delete password from Keychain: {e}")),
     }
 }
 
@@ -741,7 +743,7 @@ pub struct SftpEntry {
 /// + SftpSession::new lock-free, upholding the "no network await under the lock" invariant.
 /// Returns an error if the tab is closed (sessionId unmapped) or the connection is dead.
 async fn open_sftp(state: &AppState, session_id: &str) -> Result<SftpSession, String> {
-    const CLOSED: &str = "SFTP 所属的连接已关闭,请重新打开终端";
+    const CLOSED: &str = "The connection backing this SFTP session is closed; please reopen the terminal";
 
     // sessionId -> ConnKey
     let key = {
@@ -762,14 +764,14 @@ async fn open_sftp(state: &AppState, session_id: &str) -> Result<SftpSession, St
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("打开 SFTP 通道失败: {e}"))?;
+        .map_err(|e| format!("Failed to open SFTP channel: {e}"))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|e| format!("请求 SFTP 子系统失败: {e}"))?;
+        .map_err(|e| format!("Failed to request SFTP subsystem: {e}"))?;
     SftpSession::new(channel.into_stream())
         .await
-        .map_err(|e| format!("初始化 SFTP 会话失败: {e}"))
+        .map_err(|e| format!("Failed to initialize SFTP session: {e}"))
 }
 
 /// List a directory. path is the full remote path (front-end tracks cwd); "." resolves to the login dir.
@@ -784,7 +786,7 @@ pub async fn sftp_list(
     let dir = sftp
         .read_dir(path.as_str())
         .await
-        .map_err(|e| format!("读取目录失败: {e}"))?;
+        .map_err(|e| format!("Failed to read directory: {e}"))?;
 
     let mut entries: Vec<SftpEntry> = Vec::new();
     for entry in dir {
@@ -823,18 +825,18 @@ pub async fn sftp_download(
     let mut remote = sftp
         .open(remote_path.as_str())
         .await
-        .map_err(|e| format!("打开远程文件失败: {e}"))?;
+        .map_err(|e| format!("Failed to open remote file: {e}"))?;
     let mut local = tokio::fs::File::create(&local_path)
         .await
-        .map_err(|e| format!("创建本地文件失败: {e}"))?;
+        .map_err(|e| format!("Failed to create local file: {e}"))?;
     tokio::io::copy(&mut remote, &mut local)
         .await
-        .map_err(|e| format!("下载失败: {e}"))?;
+        .map_err(|e| format!("Download failed: {e}"))?;
     // Ensure the local buffer is flushed to disk.
     local
         .flush()
         .await
-        .map_err(|e| format!("写入本地文件失败: {e}"))?;
+        .map_err(|e| format!("Failed to write local file: {e}"))?;
     Ok(())
 }
 
@@ -850,27 +852,27 @@ pub async fn sftp_upload(
     let sftp = open_sftp(&state, &session_id).await?;
     let mut local = tokio::fs::File::open(&local_path)
         .await
-        .map_err(|e| format!("打开本地文件失败: {e}"))?;
+        .map_err(|e| format!("Failed to open local file: {e}"))?;
     // sftp.create is truncating (O_TRUNC): once created, the old remote file is cleared. If
     // copy/flush/shutdown then fails (e.g. network loss), a truncated half-file remains. So the
     // three transfer steps run in an inner async, and on failure we best-effort remove the half-file.
     let mut remote = sftp
         .create(remote_path.as_str())
         .await
-        .map_err(|e| format!("创建远程文件失败: {e}"))?;
+        .map_err(|e| format!("Failed to create remote file: {e}"))?;
     let result: Result<(), String> = async {
         tokio::io::copy(&mut local, &mut remote)
             .await
-            .map_err(|e| format!("上传失败: {e}"))?;
+            .map_err(|e| format!("Upload failed: {e}"))?;
         // flush + shutdown ensure the remote file is fully written.
         remote
             .flush()
             .await
-            .map_err(|e| format!("刷新远程文件失败: {e}"))?;
+            .map_err(|e| format!("Failed to flush remote file: {e}"))?;
         remote
             .shutdown()
             .await
-            .map_err(|e| format!("关闭远程文件失败: {e}"))?;
+            .map_err(|e| format!("Failed to close remote file: {e}"))?;
         Ok(())
     }
     .await;
@@ -892,7 +894,7 @@ pub async fn sftp_mkdir(
     let sftp = open_sftp(&state, &session_id).await?;
     sftp.create_dir(path.as_str())
         .await
-        .map_err(|e| format!("新建文件夹失败: {e}"))
+        .map_err(|e| format!("Failed to create folder: {e}"))
 }
 
 /// Recursively delete a directory: SFTP rmdir only removes empty dirs, so delete contents first
@@ -905,7 +907,7 @@ fn remove_dir_recursive<'a>(
         let entries = sftp
             .read_dir(path)
             .await
-            .map_err(|e| format!("读取目录失败: {e}"))?;
+            .map_err(|e| format!("Failed to read directory: {e}"))?;
         for entry in entries {
             let name = entry.file_name();
             if name == "." || name == ".." {
@@ -917,12 +919,12 @@ fn remove_dir_recursive<'a>(
             } else {
                 sftp.remove_file(child.as_str())
                     .await
-                    .map_err(|e| format!("删除文件失败: {e}"))?;
+                    .map_err(|e| format!("Failed to delete file: {e}"))?;
             }
         }
         sftp.remove_dir(path)
             .await
-            .map_err(|e| format!("删除目录失败: {e}"))
+            .map_err(|e| format!("Failed to delete directory: {e}"))
     })
 }
 
@@ -940,7 +942,7 @@ pub async fn sftp_remove(
     } else {
         sftp.remove_file(path.as_str())
             .await
-            .map_err(|e| format!("删除文件失败: {e}"))
+            .map_err(|e| format!("Failed to delete file: {e}"))
     }
 }
 
@@ -955,7 +957,7 @@ pub async fn sftp_rename(
     let sftp = open_sftp(&state, &session_id).await?;
     sftp.rename(old_path.as_str(), new_path.as_str())
         .await
-        .map_err(|e| format!("重命名失败: {e}"))
+        .map_err(|e| format!("Rename failed: {e}"))
 }
 
 // ============ Monitoring: run one command on an existing connection and collect stdout ============
@@ -968,7 +970,7 @@ pub async fn ssh_exec(
     session_id: String,
     command: String,
 ) -> Result<String, String> {
-    const CLOSED: &str = "监控所属的连接已关闭,请重新打开终端";
+    const CLOSED: &str = "The connection backing this monitor is closed; please reopen the terminal";
 
     // sessionId -> ConnKey (read and release the lock)
     let key = {
@@ -990,12 +992,12 @@ pub async fn ssh_exec(
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("打开监控通道失败: {e}"))?;
+        .map_err(|e| format!("Failed to open monitor channel: {e}"))?;
     // russh 0.61: exec<A: Into<Vec<u8>>>(want_reply, command); pass String directly.
     channel
         .exec(true, command)
         .await
-        .map_err(|e| format!("执行监控命令失败: {e}"))?;
+        .map_err(|e| format!("Failed to run monitor command: {e}"))?;
 
     // Collect stdout until Eof/ExitStatus/channel close. stderr (ExtendedData) is ignored.
     let mut out: Vec<u8> = Vec::new();
