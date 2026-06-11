@@ -2,7 +2,9 @@
 
 **English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-A lightweight macOS SSH client — under 50 MB of RAM.
+1. Lightweight macOS SSH client built with Tauri — uses the system WebView,  under 50 MB of RAM.   
+2. A fast, memory-light macOS SSH client. Native WebView via Tauri + Rust   (russh), tens of MB instead of hundreds.   
+3. Lean macOS SSH/SFTP client. Tauri + Rust + xterm.js, no bundled Chromium.
 
 ## Screenshots
 
