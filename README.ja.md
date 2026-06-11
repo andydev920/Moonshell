@@ -2,7 +2,9 @@
 
 [English](README.md) · **日本語** · [简体中文](README.zh-CN.md)
 
-軽量な macOS 向け SSH クライアント。メモリ使用量は 50 MB 未満。
+1. Tauri で構築した軽量な macOS 向け SSH クライアント —— システムの WebView を利用し、メモリ使用量は 50 MB 未満。  
+2. 高速・低メモリな macOS 向け SSH クライアント。Tauri + Rust（russh）でネイティブ WebView を利用し、数百 MB ではなく数十 MB で動作。  
+3. スリムな macOS 向け SSH/SFTP クライアント。Tauri + Rust + xterm.js、Chromium をバンドルしません。
 
 ## スクリーンショット
 

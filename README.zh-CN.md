@@ -2,7 +2,9 @@
 
 [English](README.md) · [日本語](README.ja.md) · **简体中文**
 
-轻量 macOS SSH 客户端，占用不到50 MB 内存。
+1. 基于 Tauri 构建的轻量 macOS SSH 客户端 —— 使用系统 WebView，内存占用不到 50 MB。  
+2. 快速、低内存占用的 macOS SSH 客户端。通过 Tauri + Rust（russh）调用原生 WebView，内存仅数十 MB，而非数百 MB。  
+3. 精简的 macOS SSH/SFTP 客户端。Tauri + Rust + xterm.js，不打包 Chromium。
 
 ## 截图
 
