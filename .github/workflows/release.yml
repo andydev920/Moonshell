@@ -1,11 +1,12 @@
 name: release
 
-# Builds, signs, notarizes, and publishes a Universal (Apple Silicon + Intel) macOS
-# build of Moonshell, then drafts a GitHub Release with the .app/.dmg attached.
+# Builds Moonshell for macOS (signed + notarized Universal: Apple Silicon + Intel)
+# and Windows (NSIS .exe installer, unsigned), then publishes one draft GitHub
+# Release with every installer attached.
 #
 # Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
 #
-# Required repository secrets (Settings -> Secrets and variables -> Actions):
+# Required repository secrets (Settings -> Secrets and variables -> Actions) — macOS only:
 #   APPLE_CERTIFICATE           base64 of your Developer ID Application .p12
 #                               ( base64 -i cert.p12 | pbcopy )
 #   APPLE_CERTIFICATE_PASSWORD  password set when exporting the .p12
@@ -16,6 +17,9 @@ name: release
 #   APPLE_TEAM_ID               10-char Team ID
 # Alternative to the last three (App Store Connect API key): set instead
 #   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_PATH  — see README "签名打包 / 发布"
+#
+# Windows is built unsigned: SmartScreen will warn ("unknown publisher") on first
+# run until you add an Authenticode code-signing certificate.
 
 on:
   push:
@@ -23,9 +27,51 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  release:
-    runs-on: macos-latest
+  # Create the draft release once, up front, so both platform builds upload into
+  # the same release instead of racing to create it.
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Moonshell ${tag}`,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - platform: windows-latest
+            rust_targets: ""
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
+    # Mapped to env so the optional Windows signing step can gate on it
+    # (the `secrets` context isn't allowed directly in step `if:`).
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,13 +86,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust_targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - name: Import Apple Developer certificate
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -64,6 +111,31 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      # Optional Windows Authenticode signing. Runs ONLY when the WINDOWS_CERTIFICATE
+      # secret is set; otherwise the .exe ships unsigned (SmartScreen warns). To enable,
+      # add repo secrets WINDOWS_CERTIFICATE (base64 of your .pfx) and
+      # WINDOWS_CERTIFICATE_PASSWORD. We import the cert, read its thumbprint, and inject
+      # certificateThumbprint/digestAlgorithm/timestampUrl into tauri.conf.json so the
+      # subsequent Tauri build signs the bundle.
+      - name: Set up Windows code signing
+        if: matrix.platform == 'windows-latest' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pwd = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath cert.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+          Remove-Item cert.pfx
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if (-not $conf.bundle.windows) { $conf.bundle | Add-Member -Name windows -Value (@{}) -MemberType NoteProperty }
+          $conf.bundle.windows | Add-Member -Name certificateThumbprint -Value $cert.Thumbprint -MemberType NoteProperty -Force
+          $conf.bundle.windows | Add-Member -Name digestAlgorithm -Value 'sha256' -MemberType NoteProperty -Force
+          $conf.bundle.windows | Add-Member -Name timestampUrl -Value 'http://timestamp.digicert.com' -MemberType NoteProperty -Force
+          $conf | ConvertTo-Json -Depth 32 | Set-Content src-tauri/tauri.conf.json -Encoding utf8
+          Write-Host "Signing enabled with thumbprint $($cert.Thumbprint)"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,8 +144,5 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          args: --target universal-apple-darwin
-          tagName: ${{ github.ref_name }}
-          releaseName: "Moonshell ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}

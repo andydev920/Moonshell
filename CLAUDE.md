@@ -83,6 +83,22 @@ spctl -a -vv Moonshell.app        # 期望:accepted, source=Notarized Developer 
 xcrun stapler validate Moonshell.app
 ```
 
+### Windows(.exe 安装包,NSIS)
+
+发布形态:**NSIS 安装器(`.exe`),per-user 安装**(`installMode: currentUser`,无需管理员)。密码改存 **Windows 凭据管理器**(`keyring` 的 `windows-native` 后端,按平台条件编译,见 `Cargo.toml` 的 `[target.'cfg(windows)'.dependencies]`)。bundle `targets` 已改为 `"all"`:macOS 出 app+dmg,Windows 出 nsis(+msi)。WebView2 缺失时安装器自动下载(`webviewInstallMode: downloadBootstrapper`)。
+
+跨平台代码已就绪:唯一的 Unix 专属逻辑 `harden_known_hosts_perms` 用 `#[cfg(unix)]` 隔离;known_hosts 走 russh,在 Windows 解析到 `%USERPROFILE%\.ssh\known_hosts`,与系统 ssh 互通。
+
+**本机打包(在 Windows 上)**
+```powershell
+# 一次性:Rust(MSVC 工具链)+ VS C++ Build Tools + Node 20 + pnpm
+pwsh ./scripts/build-windows.ps1
+```
+产物在 `src-tauri/target/release/bundle/nsis/*.exe`。**代码签名为可选**:本机把证书装进 Windows 证书库后,设 `$env:WINDOWS_CERTIFICATE_THUMBPRINT` 再跑脚本即自动签名;不设则出未签名包(SmartScreen 提示“未知发布者”)。
+
+**CI 发布** —— 同一个 `release.yml`:`create-release` 先建草稿,再用 matrix 在 `macos-latest` / `windows-latest` 分别构建并上传到同一 Release。打 `v*` tag 即触发,macOS 与 Windows 安装包会一起挂到该 Release。Windows 签名接线已就绪但**默认关闭**:仓库 Secrets 配 `WINDOWS_CERTIFICATE`(`.pfx` 的 base64)+ `WINDOWS_CERTIFICATE_PASSWORD` 后,CI 会导入证书、取指纹注入 `tauri.conf.json` 并签名;未配则出未签名包。
+
 ## 已知 TODO / 待加固
 
-- **正式签名发布** — 配置与 CI 已就绪,待填入 Apple 证书 + 公证凭证跑通一次
+- **正式签名发布** — macOS 侧配置与 CI 已就绪,待填入 Apple 证书 + 公证凭证跑通一次
+- **Windows 代码签名** — 接线已就绪(本机 env + CI Secrets 两条路),待购置 Authenticode 证书后填入跑通一次;未填则安装器未签名(SmartScreen 警告)
